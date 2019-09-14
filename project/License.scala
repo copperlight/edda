@@ -16,9 +16,9 @@ import sbt._
 object License {
   private val lineSeparator = System.getProperty("line.separator")
 
-  def year = ZonedDateTime.now(ZoneOffset.UTC).getYear
+  def year: Int = ZonedDateTime.now(ZoneOffset.UTC).getYear
 
-  val apache2 = s"""
+  val apache2: String = s"""
    |/*
    | * Copyright 2012-$year Netflix, Inc.
    | *
@@ -42,6 +42,7 @@ object License {
 
   def checkLicenseHeaders(log: Logger, srcDir: File): Unit = {
     val badFiles = findFiles(srcDir).filterNot(checkLicenseHeader)
+
     if (badFiles.nonEmpty) {
       badFiles.foreach { f =>
         log.error(s"bad license header: $f")
@@ -70,6 +71,7 @@ object License {
 
   def formatLicenseHeader(log: Logger, file: File): Unit = {
     val lines = Source.fromFile(file, "UTF-8").getLines().toList
+
     if (!checkLicenseHeader(lines)) {
       log.info(s"fixing license header: $file")
       writeLines(file, apache2 :: removeExistingHeader(lines))

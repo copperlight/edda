@@ -15,6 +15,12 @@
  */
 package com.netflix.edda.web
 
+import com.netflix.edda.util.EqualExpr
+import com.netflix.edda.util.FixedExpr
+import com.netflix.edda.util.FlattenExpr
+import com.netflix.edda.util.KeySelectExpr
+import com.netflix.edda.util.NotEqualExpr
+import com.netflix.edda.util.RegexExpr
 import org.scalatest.FunSuite
 
 class FieldSelectorExprTest extends FunSuite {

@@ -5,15 +5,15 @@ import bintray.BintrayKeys._
 
 object Bintray {
 
-  lazy val now = System.currentTimeMillis
-  lazy val isPullRequest = sys.env.getOrElse("TRAVIS_PULL_REQUEST", "false") != "false"
+  lazy val now: Long = System.currentTimeMillis
+  lazy val isPullRequest: Boolean = sys.env.getOrElse("TRAVIS_PULL_REQUEST", "false") != "false"
 
   private def get(k: String): String = {
     if (isPullRequest) s"dummy$k" else sys.env.getOrElse(s"bintray$k", s"missing$k")
   }
 
-  lazy val user = get("User")
-  lazy val pass = get("Key")
+  lazy val user: String = get("User")
+  lazy val pass: String = get("Key")
 
   lazy val settings: Seq[Def.Setting[_]] = bintraySettings ++ Seq(
       bintrayRepository := "maven",

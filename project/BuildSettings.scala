@@ -3,7 +3,7 @@ import sbt.Keys._
 
 object BuildSettings {
 
-  val compilerFlags = Seq(
+  val compilerFlags: Seq[String] = Seq(
     "-deprecation",
     "-unchecked",
     "-Xexperimental",
@@ -16,24 +16,26 @@ object BuildSettings {
   lazy val formatLicenseHeaders = taskKey[Unit]("Fix the license headers for all source files.")
 
   lazy val storeBintrayCredentials = taskKey[Unit]("Store bintray credentials.")
-  lazy val credentialsFile = Path.userHome / ".bintray" / ".credentials"
+  lazy val credentialsFile: File = Path.userHome / ".bintray" / ".credentials"
 
-  lazy val baseSettings =
+  lazy val baseSettings: Seq[Def.Setting[_]] =
     sbtrelease.ReleasePlugin.releaseSettings ++
     GitVersion.settings ++
     scoverage.ScoverageSbtPlugin.projectSettings
 
-  lazy val buildSettings = baseSettings ++ Seq(
+  lazy val buildSettings: Seq[Def.Setting[_]] = baseSettings ++
+    Seq(
       organization := "com.netflix.edda",
-      scalaVersion := "2.11.8",
+      scalaVersion := "2.11.12",
       scalacOptions ++= BuildSettings.compilerFlags,
       crossPaths := true,
-      crossScalaVersions := Seq("2.11.8"),
+      crossScalaVersions := Seq("2.11.12"),
       sourcesInBase := false,
       exportJars := true, // Needed for one-jar, with multi-project
       externalResolvers := BuildSettings.resolvers,
       checkLicenseHeaders := License.checkLicenseHeaders(streams.value.log, sourceDirectory.value),
-      formatLicenseHeaders := License
+      formatLicenseHeaders :=
+        License
           .formatLicenseHeaders(streams.value.log, sourceDirectory.value),
       storeBintrayCredentials := {
         IO.write(
@@ -43,9 +45,9 @@ object BuildSettings {
       }
     )
 
-  val commonDeps = Seq.empty
+  val commonDeps: Seq[sbt.ModuleID] = Seq.empty
 
-  val resolvers = Seq(
+  val resolvers: Seq[MavenRepository] = Seq(
     Resolver.mavenLocal,
     Resolver.jcenterRepo,
     "jfrog" at "http://oss.jfrog.org/oss-snapshot-local"
@@ -53,7 +55,7 @@ object BuildSettings {
 
   // Don't create root.jar, from:
   // http://stackoverflow.com/questions/20747296/producing-no-artifact-for-root-project-with-package-under-multi-project-build-in
-  lazy val noPackaging = Seq(
+  lazy val noPackaging: Seq[Def.Setting[_]] = Seq(
     Keys.`package` := file(""),
     packageBin in Global := file(""),
     packagedArtifacts := Map()

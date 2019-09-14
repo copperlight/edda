@@ -15,9 +15,11 @@
  */
 package com.netflix.edda
 
+import com.netflix.edda.actors.RequestId
+import com.netflix.edda.actors.StateMachine
+
 import scala.actors.Actor
 import scala.actors.Futures.{awaitAll, future}
-
 import org.scalatest.FunSuite
 
 case class CounterState(counter: Int = 0)

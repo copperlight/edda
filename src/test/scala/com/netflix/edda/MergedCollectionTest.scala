@@ -18,6 +18,10 @@ package com.netflix.edda
 import java.util.Properties
 
 import com.netflix.config.{ConcurrentCompositeConfiguration, DynamicPropertyFactory}
+import com.netflix.edda.actors.RequestId
+import com.netflix.edda.collections.Collection
+import com.netflix.edda.collections.MergedCollection
+import com.netflix.edda.records.Record
 import org.apache.commons.configuration.MapConfiguration
 import org.scalatest.FunSuite
 
@@ -29,7 +33,7 @@ import org.apache.log4j.Logger
 import org.apache.log4j.Level
 
 class MergedCollectionTest extends FunSuite {
-  import Utils._
+  import com.netflix.edda.util.Common._
   import Queryable._
 
   implicit val req = RequestId()

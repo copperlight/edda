@@ -16,35 +16,34 @@
 package com.netflix.edda.resources
 
 import scala.collection.mutable.{Set => MSet}
-
 import javax.servlet.http.HttpServletRequest
 import javax.ws.rs.{GET, Path}
 import javax.ws.rs.core.{Context, MediaType, Response}
 import java.io.ByteArrayOutputStream
 
-import com.netflix.edda.web.FieldSelectorParser
 import com.netflix.edda.web.FieldSelectorExpr
 import com.netflix.edda.web.KeySelectExpr
 import com.netflix.edda.web.MatchAnyExpr
-import com.netflix.edda.CollectionManager
-import com.netflix.edda.Record
-import com.netflix.edda.Utils
-import com.netflix.edda.Queryable
-import com.netflix.edda.RequestId
-
+import com.netflix.edda.actors.Queryable
+import com.netflix.edda.actors.RequestId
+import com.netflix.edda.collections.CollectionManager
+import com.netflix.edda.records.Record
+import com.netflix.edda.util.Common
+import com.netflix.edda.util.FieldSelectorExpr
+import com.netflix.edda.util.FieldSelectorParser
+import com.netflix.edda.util.KeySelectExpr
+import com.netflix.edda.util.MatchAnyExpr
 import org.codehaus.jackson.JsonEncoding.UTF8
 import org.codehaus.jackson.util.DefaultPrettyPrinter
 import org.codehaus.jackson.map.MappingJsonFactory
-
 import org.slf4j.LoggerFactory
-
 import org.joda.time.DateTime
 
 /** resource class to query collections registered with the CollectionManager */
 @Path("/v2")
 class CollectionResource {
 
-  import Utils._
+  import Common._
   import Queryable._
 
   private val logger = LoggerFactory.getLogger(getClass)
@@ -158,7 +157,7 @@ class CollectionResource {
       matrixStr: String,
       exprStr: String
     ): ReqDetails = {
-      val args: Map[String, String] = Utils.parseMatrixArguments(matrixStr)
+      val args: Map[String, String] = Common.parseMatrixArguments(matrixStr)
       val expr =
         if (exprStr == null) MatchAnyExpr
         else FieldSelectorParser.parse(exprStr)
@@ -239,7 +238,7 @@ class CollectionResource {
     // if user requested pretty-print then reformat
     // the date-times to be human readable, otherwise
     // use the pass-through formatter
-    val formatter = if (pp) Utils.dateFormatter(_) else (x: Any) => x
+    val formatter = if (pp) Common.dateFormatter(_) else (x: Any) => x
 
     /** flag used to know if we are going to go to the Datastore (we only store "live" instances
       * in memory, so when time travelling we will likely need expired resources from the Datastore
@@ -327,7 +326,7 @@ class CollectionResource {
         details.expr.select(r.data)
 
     if (data.isDefined) {
-      Utils.writeJson(details.gen, data.get, details.formatter)
+      Common.writeJson(details.gen, data.get, details.formatter)
     }
   }
 
@@ -382,7 +381,7 @@ class CollectionResource {
 
       val prefix = details.req.getContextPath + details.req.getServletPath + "/v2/";
 
-      val diff = Utils.diffRecords(
+      val diff = Common.diffRecords(
         recs,
         details.diff.collect({
           case x: String => x.toInt
@@ -411,7 +410,7 @@ class CollectionResource {
       } else details.id
       makeQuery(details) + ("id" -> idQuery)
     } else makeQuery(details)
-    if (logger.isInfoEnabled) logger.info(reqId.toString + coll + " query: " + Utils.toJson(query))
+    if (logger.isInfoEnabled) logger.info(reqId.toString + coll + " query: " + Common.toJson(query))
     val keys: Set[String] = if (details.expand) details.fields else Set("id")
     // unique(coll.query(query, details.limit, details.timeTravelling, keys, replicaOk = true), details)
     try {

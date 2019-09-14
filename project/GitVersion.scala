@@ -36,6 +36,7 @@ object GitVersion {
   private def toSnapshotVersion(branch: String, v: String): String = {
     val v2 = Version(v).map(_.bump.string).getOrElse(v)
     val suffix = "-SNAPSHOT"
+
     branch match {
       case versionBranch(b) if !v2.startsWith(b) =>
         s"${Version(s"$b.0").map(_.string).getOrElse(v2)}$suffix"

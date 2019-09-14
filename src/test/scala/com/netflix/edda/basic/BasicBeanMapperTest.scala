@@ -19,10 +19,11 @@ import org.slf4j.LoggerFactory
 import org.joda.time.DateTime
 import java.util.{LinkedList => JList}
 import java.util.Date
+
 import com.amazonaws.services.autoscaling.model.AutoScalingGroup
 import com.amazonaws.services.autoscaling.model.Instance
 import com.amazonaws.services.autoscaling.model.TagDescription
-
+import com.netflix.edda.mappers.BasicBeanMapper
 import org.scalatest.FunSuite
 
 class BasicBeanMapperTest extends FunSuite {

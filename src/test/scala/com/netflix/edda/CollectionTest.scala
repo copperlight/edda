@@ -15,20 +15,22 @@
  */
 package com.netflix.edda
 
-import com.netflix.edda.basic.BasicContext
-
 import org.scalatest.FunSuite
 import org.scalatest.BeforeAndAfter
-
 import org.joda.time.DateTime
-
 import java.util.Properties
+
 import com.netflix.config.DynamicPropertyFactory
 import com.netflix.config.ConcurrentCompositeConfiguration
-
+import com.netflix.edda.actors.RequestId
+import com.netflix.edda.collections.BasicContext
+import com.netflix.edda.collections.Collection
+import com.netflix.edda.collections.CollectionProcessor
+import com.netflix.edda.electors.Elector
+import com.netflix.edda.records.Record
+import com.netflix.edda.util.Common
 import org.apache.log4j.Logger
 import org.apache.log4j.Level
-
 import org.apache.commons.configuration.MapConfiguration
 
 import scala.actors.Actor
@@ -37,7 +39,7 @@ import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 
 class CollectionTest extends FunSuite with BeforeAndAfter {
-  import Utils._
+  import com.netflix.edda.util.Common._
   import Queryable._
 
   implicit val req = RequestId()
@@ -50,7 +52,7 @@ class CollectionTest extends FunSuite with BeforeAndAfter {
   //logger.setLevel(Level.DEBUG)
 
   before {
-    Utils.initConfiguration("edda.properties")
+    Common.initConfiguration("edda.properties")
   }
 
   test("load") {

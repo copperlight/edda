@@ -15,7 +15,14 @@
  */
 package com.netflix.edda
 
-import com.netflix.edda.basic.BasicContext
+import com.netflix.edda.actors.RequestId
+import com.netflix.edda.collections.BasicContext
+import com.netflix.edda.collections.Collection
+import com.netflix.edda.crawlers.Crawler
+import com.netflix.edda.datastores.Datastore
+import com.netflix.edda.electors.Elector
+import com.netflix.edda.records.Record
+import com.netflix.edda.records.RecordSet
 import org.joda.time.DateTime
 
 class TestDatastore extends Datastore {

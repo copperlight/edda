@@ -15,8 +15,8 @@
  */
 package com.netflix.edda
 
+import com.netflix.edda.records.Record
 import org.joda.time.DateTime
-
 import org.scalatest.FunSuite
 
 class RecordTest extends FunSuite {

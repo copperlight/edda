@@ -17,12 +17,10 @@ package com.netflix.edda.basic
 
 import java.util.Date
 
+import com.netflix.edda.records.BasicRecordMatcher
+import com.netflix.edda.records.Record
 import org.joda.time.DateTime
-
-import com.netflix.edda.Record
-
 import org.slf4j.LoggerFactory
-
 import org.scalatest.FunSuite
 import org.scalatest.matchers.MustMatchers
 
