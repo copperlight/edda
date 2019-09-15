@@ -20,41 +20,38 @@ import com.netflix.edda.aws.AwsClient
 import com.netflix.edda.collections.AwsCollectionBuilder
 import com.netflix.edda.collections.BasicContext
 import com.netflix.edda.collections.CollectionManager
-import com.netflix.edda.crawlers.AwsBeanMapper
 import com.netflix.edda.electors.Elector
+import com.netflix.edda.mappers.AwsBeanMapper
 import com.netflix.edda.mappers.BasicBeanMapper
 import com.netflix.edda.util.Common
+import com.typesafe.scalalogging.StrictLogging
 import javax.servlet.http.HttpServlet
-import org.slf4j.LoggerFactory
 
 /** simple servlet that specifies the datastores being used and creates
   * accessors to initialize the AWS client credentials and start the collections.
   * It is recommended to create a separate Servlet if behavior changes are required
   * for special collections or datastores
   */
-class BasicServer extends HttpServlet {
-  private[this] val logger = LoggerFactory.getLogger(getClass)
-  implicit val req = RequestId("basicServer")
+class BasicServer extends HttpServlet with StrictLogging {
+
+  implicit val req: RequestId = RequestId("basicServer")
 
   override def init() {
-
     Common.initConfiguration(System.getProperty("edda.properties", "edda.properties"))
 
-    logger.info(s"$req Staring Server")
+    logger.info(s"$req Starting Server")
 
     val electorClassName =
       Common.getProperty("edda", "elector.class", "", "com.netflix.edda.mongo.MongoElector").get
+
     val electorClass = this.getClass.getClassLoader.loadClass(electorClassName)
-
     val elector = electorClass.newInstance.asInstanceOf[Elector]
-
     val bm = new BasicBeanMapper with AwsBeanMapper
-
     val awsClientFactory = (account: String) => new AwsClient(account)
 
     AwsCollectionBuilder.buildAll(BasicContext, awsClientFactory, bm, elector)
 
-    if (logger.isInfoEnabled) logger.info(s"$req Starting Collections")
+    logger.info(s"$req Starting Collections")
     CollectionManager.start()
 
     super.init()

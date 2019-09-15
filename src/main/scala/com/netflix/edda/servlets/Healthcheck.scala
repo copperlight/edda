@@ -6,12 +6,11 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import com.netflix.edda.collections.CollectionManager
 import com.typesafe.scalalogging.StrictLogging
-import javax.inject.Singleton
 import javax.servlet.http.HttpServlet
 import javax.servlet.http.HttpServletRequest
 import javax.servlet.http.HttpServletResponse
 
-object HealthCheck extends StrictLogging {
+object Healthcheck extends StrictLogging {
 
   val e = new ScheduledThreadPoolExecutor(1)
   val status = new AtomicInteger(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)
@@ -38,9 +37,9 @@ object HealthCheck extends StrictLogging {
 }
 
 @Singleton
-class HealthCheckServlet extends HttpServlet {
+class Healthcheck extends HttpServlet {
 
-  import HealthCheck._
+  import Healthcheck._
 
   override protected def service(
     request: HttpServletRequest,

@@ -2,8 +2,7 @@ package com.netflix.edda.collections.view
 
 import com.netflix.edda.collections.AwsCollection
 import com.netflix.edda.collections.RootCollection
-import com.netflix.edda.crawlers.AwsInstanceCrawler
-import com.netflix.edda.crawlers.AwsReservationCrawler
+import com.netflix.edda.crawlers.aws.AwsReservationCrawler
 import com.netflix.edda.electors.Elector
 
 /** collection for AWS Instances

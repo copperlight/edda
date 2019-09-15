@@ -3,7 +3,6 @@ package com.netflix.edda.servlets
 import com.netflix.config.ConfigurationManager
 import com.netflix.edda.util.Common.toPrettyJson
 import com.typesafe.scalalogging.StrictLogging
-import javax.inject.Singleton
 import javax.servlet.http.HttpServlet
 import javax.servlet.http.HttpServletRequest
 import javax.servlet.http.HttpServletResponse
@@ -13,7 +12,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 
 @Singleton
-class RootServlet extends HttpServlet with StrictLogging {
+class Root extends HttpServlet with StrictLogging {
 
   private val config: Configuration = ConfigurationManager.getConfigInstance
 

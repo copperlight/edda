@@ -14,8 +14,10 @@ import com.netflix.config.DynamicPropertyFactory
 import com.netflix.config.DynamicStringProperty
 import com.netflix.config.FixedDelayPollingScheduler
 import com.netflix.config.sources.URLConfigurationSource
+import com.netflix.edda.actors.StateMachine
 import com.netflix.edda.datastores.Datastore
 import com.netflix.edda.records.Record
+import com.typesafe.scalalogging.StrictLogging
 import org.apache.commons.io.IOUtils
 import org.codehaus.jackson.JsonEncoding.UTF8
 import org.codehaus.jackson.JsonGenerator
@@ -23,78 +25,39 @@ import org.codehaus.jackson.JsonNode
 import org.codehaus.jackson.map.MappingJsonFactory
 import org.codehaus.jackson.util.DefaultPrettyPrinter
 import org.joda.time.DateTime
-import org.slf4j.LoggerFactory
 
 import scala.actors.DaemonActor
 import scala.actors.IScheduler
 import scala.actors.Scheduler
 
 /** singleton object for various helper functions */
-object Common {
+object Common extends StrictLogging {
+
   private lazy val factory = new MappingJsonFactory
+
   private lazy val dateFormat = {
     val formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
     formatter.setTimeZone(java.util.TimeZone.getTimeZone("UTC"))
     formatter
   }
-  private[this] val logger = LoggerFactory.getLogger(getClass)
-
-  // /** object to help syncronize an event base api (like Collection.query)
-  //   * that requires onComplete event handlers
-  //   * {{{
-  //   * var queryResults: Seq[Record] = Seq()
-  //   * SYNC {
-  //   *   collection.query(queryMap, limit, live, keys, replicaOk) {
-  //   *     case Success(results: QueryResult) => queryResults = results.records
-  //   *   }
-  //   * }
-  //   * }}}
-  //   * @param action closure to run and wait for completion
-  //   */
-  // object SYNC {
-  //   def apply(action: => Unit): Unit = {
-  //     val trapExit = Actor.self.trapExit
-  //     Actor.self.trapExit = true
-  //     var err: Throwable = null;
-  //     val actor = Actor.link(
-  //       Actor.actor {
-  //         Actor.self.react {
-  //           case 'GO => {
-  //             action
-  //           }
-  //         }
-  //       }
-  //     )
-  //     actor ! 'GO
-  //     Actor.self.receive {
-  //       case Exit(`actor`, err: scala.actors.UncaughtException) => {
-  //         throw err.cause
-  //       }
-  //       case Exit(`actor`, reason) =>
-  //     }
-  //     Actor.self.trapExit = trapExit
-  //   }
-  // }
 
   /** object to help retry critical operations.   It catches
     * any exceptions, logs them, and retrys the operation.
+    *
     * {{{
     * val state = RETRY { initState }
     * }}}
-    * @param action closure to run and retry upon exception
+    *
     */
   object RETRY {
-
-    @annotation.tailrec
     final def apply[T](action: => T): T = {
       {
         try {
           Some(action)
         } catch {
-          case e: Exception => {
-            if (logger.isErrorEnabled) logger.error("caught retryable exception:" + e, e)
+          case e: Exception =>
+            logger.error(s"caught retryable exception: ${e.getMessage}", e)
             None
-          }
         }
       } match {
         case Some(t) => t.asInstanceOf[T]
@@ -102,25 +65,23 @@ object Common {
       }
     }
 
-    @annotation.tailrec
     final def apply[T](n: Int)(action: => T): T = {
       {
         try {
           action
         } catch {
-          case e: Exception => {
-            if (logger.isErrorEnabled)
-              logger.error("caught retryable exception [" + n + "]:" + e, e)
+          case e: Exception =>
+            logger.error(s"caught retryable exception [$n]: ${e.getMessage}", e)
             e
-          }
         }
       } match {
-        case err: Exception if n > 1 => {
-          Thread.sleep(100);
+        case _: Exception if n > 1 =>
+          Thread.sleep(100)
           RETRY.apply(n - 1)(action)
-        }
-        case err: Exception => throw err
-        case t              => t.asInstanceOf[T]
+        case err: Exception =>
+          throw err
+        case t =>
+          t.asInstanceOf[T]
       }
     }
 
@@ -131,6 +92,7 @@ object Common {
 
     /** add a partial function to allow for specific exception
       * handling when needed
+      *
       * @param pf PartialFunction to handle exception types
       */
     def addExceptionHandler(pf: PartialFunction[Exception, Unit]): ActorExceptionHandler = {
@@ -141,45 +103,55 @@ object Common {
 
   /** class used to assist logging and allow for abstracted exception handling
     * for simple actors
+    *
     * @param name name of actor that is seen when logging
     * @param body closure run as the actors "act" routine
     */
   def namedActor(name: String)(body: => Unit): ActorExceptionHandler = {
-    val a = new ActorExceptionHandler {
-      override def toString = name
-      override def act() = body
+    val a: ActorExceptionHandler = new ActorExceptionHandler {
+      override def toString: String = name
+      override def act(): Unit = body
 
       /** setup exceptionHandler to use the custom handlers modified
         * with addExceptionHandler
         */
-      override def exceptionHandler = handlers
-      // dont use parantScheduler use global pool
+      override def exceptionHandler: StateMachine.Handler = handlers
+
+      // dont use parentScheduler use global pool
       override final val scheduler: IScheduler = Scheduler
     }
+
     a.start()
     a
   }
 
   /** allow for hierarchical properties
     * {{{
-    * if we have prefix = "edda.collection",
-    *            propName = "enabled",
-    *            nameContext  = "test.us-east-1.aws.addresses"
-    * then it will look for (in this order):
-    *     edda.collection.test.us-east-1.aws.addresses.enabled
-    *     edda.collection.test.us-east-1.aws.enabled
-    *     edda.collection.us-east-1.aws.addresses.enabled
-    *     edda.collection.test.us-east-1.enabled
-    *     edda.collection.us-east-1.aws.enabled
-    *     edda.collection.aws.addresses.enabled
-    *     edda.collection.test.enabled
-    *     edda.collection.us-east-1.enabled
+    * given:
+    *
+    *   - prefix      = "edda.collection",
+    *   - propName    = "enabled",
+    *   - nameContext = "test.us-east-1.aws.addresses"
+    *
+    * then it will look for the following property names in order:
+    *
+    *   - edda.collection.test.us-east-1.aws.addresses.enabled
+    *   - edda.collection.test.us-east-1.aws.enabled
+    *   - edda.collection.us-east-1.aws.addresses.enabled
+    *   - edda.collection.test.us-east-1.enabled
+    *   - edda.collection.us-east-1.aws.enabled
+    *   - edda.collection.aws.addresses.enabled
+    *   - edda.collection.test.enabled
+    *   - edda.collection.us-east-1.enabled
     *     edda.collection.aws.enabled
     *     edda.collection.addresses.enabled
     *     edda.collection.enabled
-    * else return default
+    *
+    * else:
+    *
+    * - return default
     * }}}
-    * @param props group of available properties
+    *
     * @param prefix root prefix, generally "edda.something"
     * @param propName property name (ie "enabled")
     * @param nameContext set property names to search though
@@ -193,27 +165,27 @@ object Common {
     defaultProperty: String
   ): DynamicStringProperty = {
     val parts = nameContext.split('.')
-    Range(1, parts.size + 1).reverse
-      .map(
-        ix => parts.sliding(ix).map(prefix + "." + _.mkString(".") + "." + propName)
-      )
-      .flatten collectFirst {
-      case prop: String if Option(DynamicProperty.getInstance(prop).getString()).isDefined => {
-        logger.debug(
-          s"using property $prop for $prefix.$nameContext.$propName [${DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty).get}]"
-        )
-        DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty)
+
+    Range(1, parts.length + 1).reverse
+      .flatMap { ix =>
+        parts.sliding(ix).map(prefix + "." + _.mkString(".") + "." + propName)
       }
-    } match {
-      case Some(v) => v
-      case None => {
+      .collectFirst {
+        case prop: String if Option(DynamicProperty.getInstance(prop).getString()).isDefined =>
+          logger.debug(
+            s"using property $prop for $prefix.$nameContext.$propName [${DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty).get}]"
+          )
+          DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty)
+      } match {
+      case Some(v) =>
+        v
+      case None =>
         val prop = prefix + "." + propName
         val fullProp = if (nameContext.isEmpty) prop else s"$prefix.$nameContext.$propName"
         logger.debug(
           s"using property $prefix.$propName for $fullProp [${DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty).get}]"
         )
         DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty)
-      }
     }
   }
 
@@ -221,6 +193,7 @@ object Common {
     * {{{
     * logger.info("stuff {} {} {} {}", toObjects(1, 1.2, true, "string"))
     * }}}
+    *
     * @param args list of items to massage into list of AnyRef
     */
   def toObjects(args: Any*): Array[AnyRef] = {
@@ -239,7 +212,7 @@ object Common {
             case v: Boolean          => v.asInstanceOf[java.lang.Boolean]
             case (v: Any, f: String) => f.format(v)
             case v: AnyRef           => v
-          }
+        }
       )
       .toArray[AnyRef]
   }
@@ -257,7 +230,7 @@ object Common {
   }
 
   /** convert an object to a json string */
-  def toJson(obj: Any, formatter: (Any) => Any = (x: Any) => x): String = {
+  def toJson(obj: Any, formatter: Any => Any = (x: Any) => x): String = {
     val baos = new ByteArrayOutputStream()
     val gen = factory.createJsonGenerator(baos, UTF8)
     writeJson(gen, obj, formatter)
@@ -268,11 +241,12 @@ object Common {
   /** given an JsonGenerator, write object to generator.  Apply
     * formatter to possible translate data (ie convert millisecond
     * timetamps to humanreadable time strings)
+    *
     * @param gen JsonGenerator to write to
     * @param obj object to convert to json
-    * @param fmt abitrary object translator
+    * @param fmt arbitrary object translator
     */
-  def writeJson(gen: JsonGenerator, obj: Any, fmt: (Any) => Any = (x: Any) => x) {
+  def writeJson(gen: JsonGenerator, obj: Any, fmt: Any => Any = (x: Any) => x) {
     fmt(obj) match {
       case v: Boolean  => gen.writeBoolean(v)
       case v: Byte     => gen.writeNumber(v)
@@ -286,7 +260,7 @@ object Common {
       case v: Date     => gen.writeNumber(v.getTime)
       case v: Record   => writeJson(gen, v.toMap, fmt)
       case v: DateTime => gen.writeNumber(v.getMillis)
-      case v: Map[_, _] => {
+      case v: Map[_, _] =>
         gen.writeStartObject()
         v.toSeq
           .sortBy(_._1.asInstanceOf[String])
@@ -295,18 +269,15 @@ object Common {
             writeJson(gen, pair._2, fmt)
           })
         gen.writeEndObject()
-      }
-      case v: Seq[_] => {
+      case v: Seq[_] =>
         gen.writeStartArray()
         v.foreach(writeJson(gen, _, fmt))
         gen.writeEndArray()
-      }
       case null => gen.writeNull()
-      case v => {
+      case v =>
         throw new java.lang.RuntimeException(
-          "unable to convert \"" + v + "\" [" + v.getClass + "] to json"
+          s"unable to convert '$v' [${v.getClass}] to json"
         )
-      }
     }
   }
 
@@ -322,14 +293,13 @@ object Common {
       case _ if node.isDouble     => node.getDoubleValue
       case _ if node.isTextual    => node.getTextValue
       case _ if node.isNull       => null
-      case _ if node.isObject => {
+      case _ if node.isObject =>
         node.getFieldNames.asScala
           .map(
             key => key -> fromJson(node.get(key))
           )
           .toMap
-      }
-      case _ if node.isArray => node.getElements.asScala.map(fromJson(_)).toList
+      case _ if node.isArray => node.getElements.asScala.map(fromJson).toList
       case _ =>
         throw new java.lang.RuntimeException("unable to convert from Json to Scala: " + node)
     }
@@ -357,12 +327,15 @@ object Common {
     import difflib.Patch
 
     import scala.collection.JavaConverters._
+
     if (recs.size < 2) {
       throw new java.lang.RuntimeException("diff requires at least 2 records")
     }
+
     // map each record to a tuple of it's id uri and pretty-printed string output
     // then use 2-wide sliding window and create unified diffs for each pair
     val result = new collection.mutable.StringBuilder
+
     recs
       .map(rec => {
         if (rec == null) {
@@ -383,11 +356,15 @@ object Common {
         val (a, b) = (v.head, v.tail.head)
         val aLines = a._2.split("\n").toList
         val bLines = b._2.split("\n").toList
-        val size =
-          if (context != None) context.get
+
+        val size = {
+          if (context.isDefined) context.get
           else if (aLines.length > bLines.length) aLines.length
           else bLines.length
+        }
+
         val patch: Patch = DiffUtils.diff(bLines.asJava, aLines.asJava)
+
         DiffUtils
           .generateUnifiedDiff(b._1, a._1, bLines.asJava, patch, size)
           .asScala
@@ -396,6 +373,7 @@ object Common {
             result.append('\n')
           })
       })
+
     result.toString()
   }
 
@@ -403,7 +381,8 @@ object Common {
     *  note: the string must start with ';'
     */
   def parseMatrixArguments(arguments: String): Map[String, String] = arguments match {
-    case m if m == null || m == "" => Map()
+    case m if m == null || m == "" =>
+      Map()
     // skip null/or empty matrix (ie ";;a=b"), also map value null to matrix args missing value
     case _ =>
       arguments.tail
@@ -421,9 +400,10 @@ object Common {
   def initConfiguration(name: String) {
     val composite = DynamicPropertyFactory.getBackingConfigurationSource
       .asInstanceOf[ConcurrentCompositeConfiguration]
+
     if (composite == null) {
       // DynamicPropertyFactory not been initialized yet, so reset the default config file name
-      System.setProperty("archaius.configurationSource.defaultFileName", name);
+      System.setProperty("archaius.configurationSource.defaultFileName", name)
       // get an instance ... this will initialize configuration
       DynamicPropertyFactory.getInstance
     } else {
@@ -431,25 +411,25 @@ object Common {
       // the edda.config to the configuration composite
       val scheduler = new FixedDelayPollingScheduler
       val source = new URLConfigurationSource(
-        Thread.currentThread().getContextClassLoader().getResource(name)
+        Thread.currentThread().getContextClassLoader.getResource(name)
       )
       val eddaConfig = new DynamicConfiguration(source, scheduler)
       composite.addConfiguration(eddaConfig, "eddaConfig")
     }
   }
 
-  def uuid = java.util.UUID.randomUUID.toString
+  def uuid: String = java.util.UUID.randomUUID.toString
 
   def compress(in: String): Array[Byte] = {
-    var out = new ByteArrayOutputStream()
-    var gzip = new GZIPOutputStream(out)
+    val out = new ByteArrayOutputStream()
+    val gzip = new GZIPOutputStream(out)
     gzip.write(in.getBytes("UTF-8"))
     gzip.close()
-    out.toByteArray()
+    out.toByteArray
   }
 
   def decompress(in: Array[Byte]): String = {
-    val gis = new GZIPInputStream(new ByteArrayInputStream(in));
+    val gis = new GZIPInputStream(new ByteArrayInputStream(in))
     IOUtils.toString(gis, "UTF-8")
   }
 
@@ -457,23 +437,23 @@ object Common {
     Common
       .getProperty("edda", "datastore.class", name, "com.netflix.edda.mongo.MongoDatastore")
       .get match {
-      case datastoreClassName: String if datastoreClassName != "" => {
+      case datastoreClassName: String if datastoreClassName != "" =>
         val datastoreClass = this.getClass.getClassLoader.loadClass(datastoreClassName)
         val datastoreCtor = datastoreClass.getConstructor(classOf[String])
         Some(datastoreCtor.newInstance(name).asInstanceOf[Datastore])
-      }
-      case _ => None
+      case _ =>
+        None
     }
   }
 
   def makeCurrentDatastore(name: String): Option[Datastore] = {
     Common.getProperty("edda", "datastore.current.class", name, "").get match {
-      case datastoreClassName: String if datastoreClassName != "" => {
+      case datastoreClassName: String if datastoreClassName != "" =>
         val datastoreClass = this.getClass.getClassLoader.loadClass(datastoreClassName)
         val datastoreCtor = datastoreClass.getConstructor(classOf[String])
         Some(datastoreCtor.newInstance(name).asInstanceOf[Datastore])
-      }
-      case _ => None
+      case _ =>
+        None
     }
   }
 }

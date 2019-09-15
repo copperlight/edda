@@ -18,18 +18,21 @@ package com.netflix.edda.electors
 import java.util.concurrent.Callable
 import java.util.concurrent.ThreadPoolExecutor
 
-import com.netflix.edda.ElectorExecutionContext
+import com.netflix.config.DynamicStringProperty
 import com.netflix.edda.actors.Observable
 import com.netflix.edda.actors.ObserverExecutionContext
 import com.netflix.edda.actors.RequestId
+import com.netflix.edda.actors.StateMachine
+import com.netflix.edda.actors.StateMachine.Transition
 import com.netflix.edda.util.Common
 import com.netflix.servo.DefaultMonitorRegistry
 import com.netflix.servo.monitor.BasicGauge
 import com.netflix.servo.monitor.MonitorConfig
 import com.netflix.servo.monitor.Monitors
-import org.slf4j.LoggerFactory
+import com.typesafe.scalalogging.StrictLogging
 
 import scala.actors.Actor
+import scala.concurrent.Future
 
 /** state for Elector StateMachine
   *
@@ -38,9 +41,7 @@ import scala.actors.Actor
 case class ElectorState(isLeader: Boolean = false)
 
 /** companion object for [[Elector]]. */
-object Elector extends StateMachine.LocalState[ElectorState] {
-
-  val logger = LoggerFactory.getLogger(getClass)
+object Elector extends StateMachine.LocalState[ElectorState] with StrictLogging {
 
   /** Message sent to observers after an Election */
   case class ElectionResult(from: Actor, result: Boolean)(implicit req: RequestId)
@@ -59,11 +60,12 @@ abstract class Elector extends Observable {
 
   import Elector._
 
-  val self = this
+  val self: Elector = this
+
   private[this] val leaderGauge: BasicGauge[java.lang.Integer] = new BasicGauge[java.lang.Integer](
     MonitorConfig.builder("leader").build(),
     new Callable[java.lang.Integer] {
-      def call() = if (self.isLeader()(RequestId("leaderGauge"))) 1 else 0
+      def call(): Integer = if (self.isLeader()(RequestId("leaderGauge"))) 1 else 0
     }
   )
 
@@ -75,24 +77,28 @@ abstract class Elector extends Observable {
 
   def isLeader()(implicit req: RequestId): Boolean = {
     val p = scala.concurrent.promise[Boolean]
+
     Common.namedActor(this + " elector client") {
       val msg = IsLeader(Actor.self)
-      if (logger.isDebugEnabled)
-        logger.debug(s"$req${Actor.self} sending: $msg -> $this with 10000ms timeout")
+
+      logger.debug(s"$req${Actor.self} sending: $msg -> $this with 10000ms timeout")
+
       this !? (10000, msg) match {
-        case Some(ElectionResult(from, result)) => p success result
+        case Some(ElectionResult(_, result)) =>
+          p success result
         case Some(message) =>
           p failure new java.lang.UnsupportedOperationException(
-            "Failed to determine leadership: " + message
+            s"Failed to determine leadership: $message"
           )
         case None =>
           p failure new java.lang.RuntimeException("TIMEOUT: isLeader response within 10s")
       }
     }
+
     scala.concurrent.Await.result(p.future, duration)
   }
 
-  val pollCycle = Common.getProperty("edda.elector", "refresh", "", "10000")
+  val pollCycle: DynamicStringProperty = Common.getProperty("edda.elector", "refresh", "", "10000")
 
   val electionPoller = new ElectorPoller(this)
 
@@ -100,13 +106,17 @@ abstract class Elector extends Observable {
   protected def runElection()(implicit req: RequestId): Boolean
 
   /** setup initial Elector state */
-  protected override def initState = addInitialState(super.initState, newLocalState(ElectorState()))
+  protected override def initState: StateMachine.State = {
+    addInitialState(super.initState, newLocalState(ElectorState()))
+  }
 
   /** set up observers to watch ourselves for leadership results.  Start an election immediately
     * then start the poller that will periodically run elections. */
   protected override def init() {
-    implicit val req = RequestId("init")
+    implicit val req: RequestId = RequestId("init")
+
     Monitors.registerObject("edda.elector", this)
+
     DefaultMonitorRegistry
       .getInstance()
       .register(
@@ -115,59 +125,62 @@ abstract class Elector extends Observable {
           this.pool.asInstanceOf[ThreadPoolExecutor]
         )
       )
-    Common.namedActor(this + " init") {
+
+    Common.namedActor(s"$this init") {
       val msg = RunElection(Actor.self)
-      if (logger.isDebugEnabled) logger.debug(s"$req${Actor.self} sending: $msg -> $this")
+      logger.debug(s"$req${Actor.self} sending: $msg -> $this")
       this ! msg
+
       electionPoller.start()
-      super.init
+      super.init()
+
       // listen to our own message events
-      def retry: Unit = {
+      def retry(): Unit = {
         import ObserverExecutionContext._
         this.addObserver(this) onFailure {
-          case msg => {
-            if (logger.isErrorEnabled)
-              logger.error(s"$req${Actor.self} failed to add observer $this to $this, retrying")
-            retry
-          }
+          case _ =>
+            logger.error(s"$req${Actor.self} failed to add observer $this to $this, retrying")
+            retry()
         }
       }
-      retry
+
+      retry()
     }
   }
 
   /** handle StateMachine messages */
-  private def localTransitions: PartialFunction[(Any, StateMachine.State), StateMachine.State] = {
-    case (gotMsg @ RunElection(from), state) => {
-      implicit val req = gotMsg.req
+  private def localTransitions: Transition = {
+    case (gotMsg @ RunElection(_), state) =>
+      implicit val req: RequestId = gotMsg.req
+
       flushMessages {
-        case RunElection(from) => true
+        case RunElection(_) => true
       }
-      // Utils.NamedActor(this + " election runner") {
+
       import com.netflix.edda.actors.ElectorExecutionContext._
-      scala.concurrent.future {
+
+      Future {
         val result = runElection()
         val msg = ElectionResult(this, result)
+
         Observable
           .localState(state)
           .observers
           .foreach(o => {
-            if (logger.isDebugEnabled) logger.debug(s"$req$this sending: $msg -> $o")
+            logger.debug(s"$req$this sending: $msg -> $o")
             o ! msg
           })
       }
+
       state
-    }
-    case (ElectionResult(from, result), state) => {
+    case (ElectionResult(_, result), state) =>
       setLocalState(state, ElectorState(result))
-    }
-    case (gotMsg @ IsLeader(from), state) => {
-      implicit val req = gotMsg.req
+    case (gotMsg @ IsLeader(_), state) =>
+      implicit val req: RequestId = gotMsg.req
       val msg = ElectionResult(this, localState(state).isLeader)
-      if (logger.isDebugEnabled) logger.debug(s"$req$this sending: $msg -> $sender")
+      logger.debug(s"$req$this sending: $msg -> $sender")
       sender ! msg
       state
-    }
   }
 
   override def stop()(implicit req: RequestId) {
@@ -175,5 +188,7 @@ abstract class Elector extends Observable {
     super.stop()
   }
 
-  override def transitions = localTransitions orElse super.transitions
+  override def transitions: Transition = {
+    localTransitions orElse super.transitions
+  }
 }

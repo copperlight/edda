@@ -1,6 +1,5 @@
 package com.netflix.edda.datastores
 
-import com.netflix.edda.RecordSet
 import com.netflix.edda.actors.Queryable
 import com.netflix.edda.actors.RequestId
 import com.netflix.edda.collections.Collection
@@ -14,9 +13,12 @@ trait Datastore {
   def init()
 
   /** perform query on data store, see [[Queryable.query]] */
-  def query(queryMap: Map[String, Any], limit: Int, keys: Set[String], replicaOk: Boolean)(
-    implicit req: RequestId
-  ): Seq[Record]
+  def query(
+    queryMap: Map[String, Any],
+    limit: Int,
+    keys: Set[String],
+    replicaOk: Boolean
+  )(implicit req: RequestId): Seq[Record]
 
   /** load records from data store, used at Collection start-up to prime in-memory cache and to refresh
     * in-memory cache when we are not the leader

@@ -16,42 +16,43 @@
 package com.netflix.edda.electors
 
 import com.netflix.edda.actors.RequestId
+import com.netflix.edda.actors.StateMachine
 import com.netflix.edda.util.Common
-import org.slf4j.LoggerFactory
+import com.typesafe.scalalogging.StrictLogging
 
 import scala.actors.Actor
 import scala.actors.TIMEOUT
 
-class ElectorPoller(elector: Elector) extends Actor {
-  val logger = LoggerFactory.getLogger(getClass)
+class ElectorPoller(elector: Elector) extends Actor with StrictLogging {
 
-  override def toString = elector + " poller"
+  override def toString: String = s"$elector poller"
 
-  override def act() = {
+  override def act(): Unit = {
     var keepLooping = true
+
     Actor.self.loopWhile(keepLooping) {
-      implicit val req = RequestId(Common.uuid + " poller")
+      implicit val req: RequestId = RequestId(s"${Common.uuid} poller")
+
       Actor.self.reactWithin(elector.pollCycle.get.toInt) {
-        case got @ StateMachine.Stop(from) => keepLooping = false
-        case got @ TIMEOUT => {
-          if (logger.isDebugEnabled) logger.debug(s"$req$this received: $got")
+        case _ @StateMachine.Stop(_) =>
+          keepLooping = false
+        case got @ TIMEOUT =>
+          logger.debug(s"$req$this received: $got")
           val msg = Elector.RunElection(Actor.self)
-          if (logger.isDebugEnabled) logger.debug(s"$req$this sending: $msg -> $elector")
+          logger.debug(s"$req$this sending: $msg -> $elector")
           elector ! msg
-        }
       }
     }
   }
 
-  override def exceptionHandler = {
+  override def exceptionHandler: StateMachine.Handler = {
     case e: Exception =>
-      if (logger.isErrorEnabled) logger.error(this + " failed to setup election poller", e)
+      logger.error(s"$this failed to setup election poller", e)
   }
 
-  def stop()(implicit req: RequestId) {
+  def stop()(implicit req: RequestId): Unit = {
     val msg = StateMachine.Stop(this)
-    if (logger.isDebugEnabled) logger.debug(s"$req$this sending: $msg -> $this")
+    logger.debug(s"$req$this sending: $msg -> $this")
     this ! msg
   }
-
 }

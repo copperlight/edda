@@ -15,43 +15,49 @@
  */
 package com.netflix.edda.electors
 
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient
+import com.netflix.config.DynamicStringProperty
 import com.netflix.edda.actors.RequestId
+import com.netflix.edda.aws.AwsClient
+import com.netflix.edda.aws.DynamoDB
 import com.netflix.edda.util.Common
 import org.joda.time.DateTime
-import org.slf4j.LoggerFactory
 
 /** [[Elector]] subclass that uses DynamoDB's write contstraint operations
   * to organize leadership
   */
 class DynamoDBElector extends Elector {
-  private[this] val logger = LoggerFactory.getLogger(getClass)
 
-  lazy val instance = Option(
-    System
-      .getenv(Common.getProperty("edda.elector", "uniqueEnvName", "dynamodb", "EC2_INSTANCE_ID").get)
-  ).getOrElse("dev")
+  lazy val instance: String = {
+    val uniq =
+      Common.getProperty("edda.elector", "uniqueEnvName", "dynamodb", "EC2_INSTANCE_ID").get
 
-  val leaderTimeout = Common.getProperty("edda.elector", "leaderTimeout", "dynamodb", "5000")
+    Option(System.getenv(uniq)).getOrElse("dev")
+  }
 
+  val leaderTimeout: DynamicStringProperty =
+    Common.getProperty("edda.elector", "leaderTimeout", "dynamodb", "5000")
   private lazy val monitorTableName =
     Common.getProperty("edda.elector", "tableName", "dynamodb", "edda-leader").get
-
-  lazy val readCap = Common.getProperty("edda.elector", "readCapacity", "dynamodb", "5").get.toLong
-  lazy val writeCap = Common.getProperty("edda.elector", "writeCapacity", "dynamodb", "1").get.toLong
-
-  lazy val account = Common.getProperty("edda", "account", "elector.dynamodb", "").get
+  lazy val readCap: Long =
+    Common.getProperty("edda.elector", "readCapacity", "dynamodb", "5").get.toLong
+  lazy val writeCap: Long =
+    Common.getProperty("edda.elector", "writeCapacity", "dynamodb", "1").get.toLong
+  lazy val account: String =
+    Common.getProperty("edda", "account", "elector.dynamodb", "").get
 
   private var inited = false
 
-  val readDynamo = new AwsClient(account).dynamo
+  val readDynamo: AmazonDynamoDBClient = new AwsClient(account).dynamo
 
-  val writeDynamo = {
+  val writeDynamo: AmazonDynamoDBClient = {
     val client = new AwsClient(account).dynamo
     client
   }
 
   override def init() {
-    implicit val client = writeDynamo
+    implicit val client: AmazonDynamoDBClient = writeDynamo
+
     DynamoDB.init(monitorTableName, readCap, writeCap)
     inited = true
     super.init()
@@ -65,30 +71,33 @@ class DynamoDBElector extends Elector {
     * the leaderTimeout value then attempt to update leader record as self.  The records
     * for mtime and new-leader are atomic conditional updates so if some other servers
     * updates dynamodb first we will "lose" will not be the leader.
+    *
     * @return
     */
   protected override def runElection()(implicit req: RequestId): Boolean = {
     if (!inited) {
       return false
     }
-    implicit val client = writeDynamo
-    val now = DateTime.now
+
+    implicit val client: AmazonDynamoDBClient = writeDynamo
+
     var leader = instance
-
     var isLeader = false
-
     val t0 = System.nanoTime()
+
     val response = try {
-      implicit val client = readDynamo
+      implicit val client: AmazonDynamoDBClient = readDynamo
       DynamoDB.get(monitorTableName, "name", "leader")
     } finally {
       val t1 = System.nanoTime()
-      val lapse = (t1 - t0) / 1000000;
-      if (logger.isInfoEnabled) logger.info(s"$req$this get leader lapse: ${lapse}ms")
+      val lapse = (t1 - t0) / 1000000
+      logger.info(s"$req$this get leader lapse: ${lapse}ms")
     }
+
     if (response == null || response.isEmpty) {
       // no record found, so this is the first time we are creating a record
       val t0 = System.nanoTime()
+
       try {
         DynamoDB.put(
           monitorTableName,
@@ -103,27 +112,27 @@ class DynamoDBElector extends Elector {
             "name" -> None
           )
         )
+
         isLeader = true
       } catch {
-        case e: Exception => {
-          if (logger.isErrorEnabled)
-            logger.error(s"$req$this failed to create leader record: " + e.getMessage)
+        case e: Exception =>
+          logger.error(s"$req$this failed to create leader record: ${e.getMessage}")
           isLeader = false
-        }
       } finally {
         val t1 = System.nanoTime()
-        val lapse = (t1 - t0) / 1000000;
-        if (logger.isInfoEnabled) logger.info(s"$req$this create leader lapse: ${lapse}ms")
+        val lapse = (t1 - t0) / 1000000
+        logger.info(s"$req$this create leader lapse: ${lapse}ms")
       }
     } else {
       // record found, if we are leader update mtime
       // if we are not leader check to see if leader record has expired and they try to become leader
       val item = response.get
-
       leader = item("instance")
+
       if (leader == instance) {
         // update mtime
         val t0 = System.nanoTime()
+
         try {
           DynamoDB.put(
             monitorTableName,
@@ -139,18 +148,16 @@ class DynamoDBElector extends Elector {
               "req"      -> item("req")
             )
           )
+
           isLeader = true
         } catch {
-          case e: Exception => {
-            if (logger.isErrorEnabled)
-              logger.error(s"$req$this failed to update mtime for leader record: ${e.getMessage}")
+          case e: Exception =>
+            logger.error(s"$req$this failed to update mtime for leader record: ${e.getMessage}")
             isLeader = false
-          }
         } finally {
           val t1 = System.nanoTime()
-          val lapse = (t1 - t0) / 1000000;
-          if (logger.isInfoEnabled)
-            logger.info(s"$req$this index leader (update mtime) lapse: ${lapse}ms")
+          val lapse = (t1 - t0) / 1000000
+          logger.info(s"$req$this index leader (update mtime) lapse: ${lapse}ms")
         }
       } else {
         val mtime = new DateTime(item("mtime").toLong)
@@ -170,7 +177,7 @@ class DynamoDBElector extends Elector {
                 "req"      -> req.id
               ),
               Map(
-                // precondition: make sure the update happend on record we fetched
+                // precondition: make sure the update happened on record we fetched
                 "instance" -> leader,
                 "req"      -> item("req")
               )
@@ -178,25 +185,23 @@ class DynamoDBElector extends Elector {
             isLeader = true
             leader = instance;
           } catch {
-            case e: Exception => {
-              if (logger.isErrorEnabled)
-                logger.error(
-                  s"$req$this failed to update leader for leader record: ${e.getMessage}"
-                )
+            case e: Exception =>
+              logger.error(
+                s"$req$this failed to update leader for leader record: ${e.getMessage}"
+              )
               isLeader = false
-            }
           } finally {
             val t1 = System.nanoTime()
-            val lapse = (t1 - t0) / 1000000;
-            if (logger.isInfoEnabled)
-              logger.info(s"$req$this index leader + archive old leader lapse: ${lapse}ms")
+            val lapse = (t1 - t0) / 1000000
+            logger.info(s"$req$this index leader + archive old leader lapse: ${lapse}ms")
           }
         }
       }
     }
-    if (logger.isInfoEnabled) logger.info(s"$req$this Leader [$instance] $isLeader [$leader]")
+
+    logger.info(s"$req$this Leader [$instance] $isLeader [$leader]")
     isLeader
   }
 
-  override def toString = "[Elector DynamoDB]"
+  override def toString: String = "[Elector DynamoDB]"
 }

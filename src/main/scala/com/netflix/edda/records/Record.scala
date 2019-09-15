@@ -100,7 +100,7 @@ class Record(
   ) = new Record(id, ftime, ctime, stime, ltime, mtime, data, tags)
 
   /** flatten object into basic scala map */
-  def toMap = {
+  def toMap: Map[String, Any] = {
     Map(
       "id"    -> id,
       "ftime" -> ftime,
@@ -113,12 +113,12 @@ class Record(
     )
   }
 
-  def toId(): String = {
-    return (this.id + "|" + this.stime.getMillis)
+  def toId: String = {
+    s"${this.id}|${this.stime.getMillis}"
   }
 
   /** json serialized string used to compare if 2 records with same id are in-fact identical */
-  lazy val dataString = Common.toJson(this.data)
+  lazy val dataString: String = Common.toJson(this.data)
 
   /** compare this record to another and return true if the data is identical */
   def sameData(that: Record): Boolean = {
@@ -127,5 +127,5 @@ class Record(
   }
 
   /** make logging easier, serialize the Record to json */
-  override lazy val toString = Common.toJson(this.toMap)
+  override lazy val toString: String = Common.toJson(this.toMap)
 }

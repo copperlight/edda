@@ -19,6 +19,8 @@ import java.util.Date
 
 import org.joda.time.DateTime
 
+// TODO: port whole file - there were a bunch of fixes here
+
 /** This class allows advanced query options against in-memory records. */
 
 class BasicRecordMatcher extends RecordMatcher {
@@ -26,6 +28,7 @@ class BasicRecordMatcher extends RecordMatcher {
   /** apply query rules against in-memory records
     *
     * The query format is a Map, where the keys follow the MongoDB syntax:
+    *
     * http://www.mongodb.org/display/DOCS/Advanced+Queries
     *
     * @param queryMap key/values for the matching requirements
@@ -34,7 +37,9 @@ class BasicRecordMatcher extends RecordMatcher {
     */
   def doesMatch(queryMap: Map[String, Any], record: Map[String, Any]): Boolean = {
     // find the first rule where rule does not match record
-    !queryMap.exists(!matchRule(_, record))
+    queryMap.forall { rule =>
+      matchRule(rule, record)
+    }
   }
 
   /** Match a specific rule from the queryMap
@@ -45,27 +50,38 @@ class BasicRecordMatcher extends RecordMatcher {
     */
   protected def matchRule(rule: Any, record: Map[String, Any]): Boolean = {
     rule match {
-      case map: Map[_, _] => !map.exists(!matchRule(_, record))
-      // { key: { $op1: val, $op2: val } } ==>
-      // { key: { $op1: val }, key: { $op2: val } {
-      case (key: String, value: Map[_, _]) =>
-        !value.exists(subrule => !matchRule((key -> subrule), record))
-      // { $or: [ {key: value}, {key: value} ] }
-      case ("$or", value: Seq[_]) => value.exists(matchRule(_, record))
       // { $and: [ {key: value}, {key: value} ] }
-      case ("$and", value: Seq[_])                 => !value.exists(!matchRule(_, record))
-      case (key: String, (op: String, value: Any)) => matchOp(key, value, op, record)
-      case (key: String, value: Any)               => matchOp(key, value, "$eq", record)
-      case (key: String, null)                     => matchOp(key, null, "$eq", record)
+      case ("$and", value: Seq[_]) =>
+        value.forall(matchRule(_, record))
+      // { $or: [ {key: value}, {key: value} ] }
+      case ("$or", value: Seq[_]) =>
+        value.exists(matchRule(_, record))
+      // recursive call after extracting from $and/$or
+      case map: Map[_, _] =>
+        map.forall(matchRule(_, record))
+
+      // { key: { $op1: val, $op2: val } }
+      case (key: String, value: Map[_, _]) =>
+        value.forall { subrule =>
+          matchRule(key -> subrule, record)
+        }
+      // recursive call after extracting op
+      case (key: String, (op: String, value: Any)) =>
+        matchOp(key, value, op, record)
+
+      case (key: String, value: Any) =>
+        matchOp(key, value, "$eq", record)
+      case (key: String, null) =>
+        matchOp(key, null, "$eq", record)
     }
   }
 
   /** basic comparator that attempts to do "the right thing" when passed
     * various simple data types.  There is probably a better way to do it.*/
   protected def cmpPartialMatcher: PartialFunction[(Any, Any), Int] = {
-    case (null, null)     => 0
-    case (found, null)    => -1
-    case (null, expected) => 1
+    case (null, null) => 0
+    case (_, null)    => -1
+    case (null, _)    => 1
 
     case (found: Boolean, expected: String)  => found.compareTo(expected.toBoolean)
     case (found: String, expected: Boolean)  => found.toBoolean.compareTo(expected)
@@ -168,7 +184,7 @@ class BasicRecordMatcher extends RecordMatcher {
           inMatcher(foundSeq, expected)
         }
         case _ => cmpPartialMatcher.lift(found, expected) == Some(0)
-      }
+    }
 
   protected def cmpMatcher =
     (found: Any, expected: Any) => {
@@ -181,7 +197,7 @@ class BasicRecordMatcher extends RecordMatcher {
       found match {
         case None | Nil => expected == false
         case _          => expected == true
-      }
+    }
 
   protected def inMatcher =
     (found: Any, expected: Any) => {
@@ -195,8 +211,9 @@ class BasicRecordMatcher extends RecordMatcher {
       }
     }
 
-  protected def regexMatcher =
+  protected def regexMatcher = {
     (found: Any, expected: Any) => (expected.toString.r findFirstIn found.toString) != None
+  }
 
   /** dispatch the match operator to the correct matching routine. */
   protected def matchOp(key: String, value: Any, op: String, record: Map[String, Any]): Boolean = {
@@ -235,19 +252,21 @@ class BasicRecordMatcher extends RecordMatcher {
     opMatcher: (Any, Any) => Boolean,
     record: Map[String, Any]
   ): Boolean = {
+
     def _findObj(parts: Array[String], value: Any, data: Map[String, Any]): Boolean = {
       val dataHead = data.get(parts.head) match {
         case Some(v) => v
         case _       => None
       }
 
-      if (parts.size == 1) {
+      if (parts.length == 1) {
         return opMatcher(dataHead, value)
       }
+
       dataHead match {
         case v: Map[_, _] => _findObj(parts.tail, value, v.asInstanceOf[Map[String, Any]])
         case v: Seq[_]    => _findList(parts.tail, value, v.asInstanceOf[Seq[Any]])
-        case v            => false
+        case _            => false
       }
     }
 
@@ -259,9 +278,10 @@ class BasicRecordMatcher extends RecordMatcher {
             case x: Map[_, _] => _findObj(parts, value, x.asInstanceOf[Map[String, Any]])
             case x: Seq[_]    => _findList(parts, value, x.asInstanceOf[Seq[Any]])
             case _            => false
-          }
+        }
       )
     }
+
     _findObj(key.split('.'), value, record)
   }
 }
