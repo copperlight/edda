@@ -2,14 +2,13 @@ package com.netflix.edda.collections.aws
 
 import com.netflix.edda.collections.AwsCollection
 import com.netflix.edda.collections.RootCollection
-import com.netflix.edda.crawlers.aws.AwsAutoScalingGroupCrawler
+import com.netflix.edda.crawlers.aws.AwsLoadBalancerV2Crawler
 import com.netflix.edda.electors.Elector
 
-class AwsAutoScalingGroupsCollection(
+class AwsLoadBalancersV2Collection(
   val accountName: String,
   val elector: Elector,
   override val ctx: AwsCollection.Context
-) extends RootCollection("aws.autoScalingGroups", accountName, ctx) {
-
-  val crawler = new AwsAutoScalingGroupCrawler(name, ctx)
+) extends RootCollection("aws.loadBalancersV2", accountName, ctx) {
+  val crawler = new AwsLoadBalancerV2Crawler(name, ctx)
 }

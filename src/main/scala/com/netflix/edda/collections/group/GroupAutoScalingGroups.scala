@@ -6,33 +6,24 @@ import com.netflix.edda.collections.Collection
 import com.netflix.edda.collections.GroupCollection
 import com.netflix.edda.collections.RootCollection
 import com.netflix.edda.collections.aws.AwsAutoScalingGroupsCollection
-import com.netflix.edda.collections.view.ViewInstanceCollection
-import com.netflix.edda.crawlers.AwsAutoScalingGroupCrawler
+import com.netflix.edda.collections.view.ViewInstancesCollection
+import com.netflix.edda.crawlers.aws.AwsAutoScalingGroupCrawler
 import com.netflix.edda.electors.Elector
 import com.netflix.edda.records.RecordSet
 import com.netflix.edda.util.Common
 import org.joda.time.DateTime
 
-/** collection for abstracted groupings of instances in AutoScalingGroups
-  *
-  * root collection name: group.autoScalingGroups
-  *
-  * see crawler details [[AwsAutoScalingGroupCrawler]]
-  *
-  * @param asgCollection ASG collection where the crawler used comes from
-  * @param instanceCollection Instance Collection so we can query for instance details
-  * @param elector Elector to determine leadership
-  * @param ctx context for AWS clients objects
-  */
 class GroupAutoScalingGroups(
   val asgCollection: AwsAutoScalingGroupsCollection,
-  val instanceCollection: ViewInstanceCollection,
+  val instanceCollection: ViewInstancesCollection,
   val elector: Elector,
   override val ctx: AwsCollection.Context
 ) extends RootCollection("group.autoScalingGroups", asgCollection.accountName, ctx)
     with GroupCollection {
+
   // don't crawl, we get crawl results from the asgCollection crawler
   override val allowCrawl = false
+
   val crawler: AwsAutoScalingGroupCrawler = asgCollection.crawler
 
   // used in GroupCollection

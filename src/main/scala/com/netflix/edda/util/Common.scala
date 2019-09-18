@@ -15,8 +15,10 @@ import com.netflix.config.DynamicStringProperty
 import com.netflix.config.FixedDelayPollingScheduler
 import com.netflix.config.sources.URLConfigurationSource
 import com.netflix.edda.actors.StateMachine
+import com.netflix.edda.actors.StateMachine.Handler
 import com.netflix.edda.datastores.Datastore
 import com.netflix.edda.records.Record
+import com.typesafe.config.Config
 import com.typesafe.scalalogging.StrictLogging
 import org.apache.commons.io.IOUtils
 import org.codehaus.jackson.JsonEncoding.UTF8
@@ -78,24 +80,25 @@ object Common extends StrictLogging {
         case _: Exception if n > 1 =>
           Thread.sleep(100)
           RETRY.apply(n - 1)(action)
-        case err: Exception =>
-          throw err
+
+        case e: Exception =>
+          throw e
+
         case t =>
           t.asInstanceOf[T]
       }
     }
-
   }
 
   trait ActorExceptionHandler extends DaemonActor {
-    var handlers: PartialFunction[Exception, Unit] = Map()
+    var handlers: Handler = Map()
 
     /** add a partial function to allow for specific exception
       * handling when needed
       *
       * @param pf PartialFunction to handle exception types
       */
-    def addExceptionHandler(pf: PartialFunction[Exception, Unit]): ActorExceptionHandler = {
+    def addExceptionHandler(pf: Handler): ActorExceptionHandler = {
       handlers = pf orElse handlers
       this
     }
@@ -112,9 +115,7 @@ object Common extends StrictLogging {
       override def toString: String = name
       override def act(): Unit = body
 
-      /** setup exceptionHandler to use the custom handlers modified
-        * with addExceptionHandler
-        */
+      /** setup exceptionHandler to use the custom handlers modified with addExceptionHandler */
       override def exceptionHandler: StateMachine.Handler = handlers
 
       // dont use parentScheduler use global pool
@@ -125,71 +126,73 @@ object Common extends StrictLogging {
     a
   }
 
-  /** allow for hierarchical properties
-    * {{{
-    * given:
+  /** Hierarchical property lookup.
     *
-    *   - prefix      = "edda.collection",
-    *   - propName    = "enabled",
-    *   - nameContext = "test.us-east-1.aws.addresses"
+    * if we have:
     *
-    * then it will look for the following property names in order:
+    *   prefix       = "edda.collection"
+    *   propName     = "enabled"
+    *   nameContext  = "test.us-east-1.aws.addresses"
     *
-    *   - edda.collection.test.us-east-1.aws.addresses.enabled
-    *   - edda.collection.test.us-east-1.aws.enabled
-    *   - edda.collection.us-east-1.aws.addresses.enabled
-    *   - edda.collection.test.us-east-1.enabled
-    *   - edda.collection.us-east-1.aws.enabled
-    *   - edda.collection.aws.addresses.enabled
-    *   - edda.collection.test.enabled
-    *   - edda.collection.us-east-1.enabled
-    *     edda.collection.aws.enabled
-    *     edda.collection.addresses.enabled
-    *     edda.collection.enabled
+    * look for the following, in order:
+    *
+    *   edda.collection.test.us-east-1.aws.addresses.enabled
+    *   edda.collection.test.us-east-1.aws.enabled
+    *   edda.collection.us-east-1.aws.addresses.enabled
+    *   edda.collection.test.us-east-1.enabled
+    *   edda.collection.us-east-1.aws.enabled
+    *   edda.collection.aws.addresses.enabled
+    *   edda.collection.test.enabled
+    *   edda.collection.us-east-1.enabled
+    *   edda.collection.aws.enabled
+    *   edda.collection.addresses.enabled
+    *   edda.collection.enabled
     *
     * else:
     *
-    * - return default
-    * }}}
+    *   return default
     *
     * @param prefix root prefix, generally "edda.something"
-    * @param propName property name (ie "enabled")
-    * @param nameContext set property names to search though
-    * @param defaultProperty the default value to return if no matching properties are found
+    * @param propName property name, such as "enabled"
+    * @param nameContext property names to search though
+    * @param defaultValue the default value to return, if no matching properties are found
     * @return the best matching property value
     */
   def getProperty(
+    config: Config,
     prefix: String,
     propName: String,
     nameContext: String,
-    defaultProperty: String
-  ): DynamicStringProperty = {
+    defaultValue: String
+  ): String = {
+
+    val requestedProp = {
+      if (nameContext.isEmpty)
+        s"$prefix.$propName"
+      else
+        s"$prefix.$nameContext.$propName"
+    }
+
     val parts = nameContext.split('.')
 
-    Range(1, parts.length + 1).reverse
-      .flatMap { ix =>
-        parts.sliding(ix).map(prefix + "." + _.mkString(".") + "." + propName)
-      }
-      .collectFirst {
-        case prop: String if Option(DynamicProperty.getInstance(prop).getString()).isDefined =>
-          logger.debug(
-            s"using property $prop for $prefix.$nameContext.$propName [${DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty).get}]"
-          )
-          DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty)
-      } match {
+    Range(1, parts.length + 1).reverse.flatMap(
+      x => parts.sliding(x).map(s"$prefix." + _.mkString(".") + s".$propName")
+    ) collectFirst {
+      case prop if config.hasPath(prop) =>
+        val v = config.getString(prop)
+        logger.debug(s"using property $prop=$v for $requestedProp")
+        v
+    } match {
       case Some(v) =>
         v
       case None =>
-        val prop = prefix + "." + propName
-        val fullProp = if (nameContext.isEmpty) prop else s"$prefix.$nameContext.$propName"
-        logger.debug(
-          s"using property $prefix.$propName for $fullProp [${DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty).get}]"
-        )
-        DynamicPropertyFactory.getInstance().getStringProperty(prop, defaultProperty)
+        logger.debug(s"using default value $defaultValue for $requestedProp")
+        defaultValue
     }
   }
 
   /** convert list of Any to list of AnyRef.  This is useful for slf4j printf style formatting:
+    *
     * {{{
     * logger.info("stuff {} {} {} {}", toObjects(1, 1.2, true, "string"))
     * }}}
@@ -394,28 +397,6 @@ object Common extends StrictLogging {
           case v: Array[String] if v.size > 2 => (v.head, v.tail.fold("")(_ + "=" + _))
         })
         .toMap
-  }
-
-  /** initialize the Archaius configuration */
-  def initConfiguration(name: String) {
-    val composite = DynamicPropertyFactory.getBackingConfigurationSource
-      .asInstanceOf[ConcurrentCompositeConfiguration]
-
-    if (composite == null) {
-      // DynamicPropertyFactory not been initialized yet, so reset the default config file name
-      System.setProperty("archaius.configurationSource.defaultFileName", name)
-      // get an instance ... this will initialize configuration
-      DynamicPropertyFactory.getInstance
-    } else {
-      // DynamicPropertyFactory has been initialized, so just add
-      // the edda.config to the configuration composite
-      val scheduler = new FixedDelayPollingScheduler
-      val source = new URLConfigurationSource(
-        Thread.currentThread().getContextClassLoader.getResource(name)
-      )
-      val eddaConfig = new DynamicConfiguration(source, scheduler)
-      composite.addConfiguration(eddaConfig, "eddaConfig")
-    }
   }
 
   def uuid: String = java.util.UUID.randomUUID.toString

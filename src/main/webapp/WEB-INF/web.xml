@@ -4,7 +4,7 @@
 
     <servlet>
         <servlet-name>edda-app</servlet-name>
-        <servlet-class>com.netflix.edda.servlets.BasicServer</servlet-class>
+        <servlet-class>com.netflix.edda.servlets.StartServer</servlet-class>
         <load-on-startup>1</load-on-startup>
     </servlet>
 

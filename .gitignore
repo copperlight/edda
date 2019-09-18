@@ -54,6 +54,7 @@ out
 *.iws
 *.iml
 atlassian-ide-plugin.xml
+src/main/scala/worksheet.sc
 
 # Eclipse specific files/directories
 .classpath
@@ -83,4 +84,3 @@ project/plugins/project/
 ################
 venv/
 site/
-

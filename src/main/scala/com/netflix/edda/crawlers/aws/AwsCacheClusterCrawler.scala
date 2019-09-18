@@ -17,7 +17,7 @@ class AwsCacheClusterCrawler(val name: String, val ctx: AwsCrawler.Context) exte
   val request = new DescribeCacheClustersRequest
 
   override def doCrawl()(implicit req: RequestId) =
-    backoffRequest { ctx.awsClient.elasticache.describeCacheClusters(request).getCacheClusters }.asScala
+    backoffRequest { ctx.awsClient.elastiCache.describeCacheClusters(request).getCacheClusters }.asScala
       .map(item => Record(item.getCacheClusterId, ctx.beanMapper(item)))
       .toSeq
 }
